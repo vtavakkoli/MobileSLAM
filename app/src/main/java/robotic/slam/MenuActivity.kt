@@ -31,7 +31,7 @@ class MenuActivity : AppCompatActivity() {
             AlertDialog.Builder(this)
                 .setTitle("SLAM Engine")
                 .setMessage(
-                    "Written by Vahid Tavakkoli, 2026 " + "For education purpose." +
+                    "Written by Dr. Vahid Tavakkoli, 2026. " + "For education purpose. " +
                     "This is a simple OpenCV ORB monocular SLAM demo for learning feature matching, camera trajectory estimation, and sparse point-cloud visualization."
                 )
                 .setPositiveButton("OK", null)
