@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="purple_200">#FFBB86FC</color>
+    <color name="purple_500">#7C3AED</color>
+    <color name="purple_700">#312E81</color>
+    <color name="teal_200">#34D399</color>
+    <color name="teal_700">#059669</color>
+    <color name="black">#FF000000</color>
+    <color name="white">#FFFFFFFF</color>
+
+    <color name="slam_bg">#050816</color>
+    <color name="slam_surface">#0F172A</color>
+    <color name="slam_surface_2">#111827</color>
+    <color name="slam_green">#34D399</color>
+    <color name="slam_blue">#38BDF8</color>
+    <color name="slam_purple">#A78BFA</color>
+    <color name="slam_text_secondary">#9CA3AF</color>
+    <color name="icon_background">#050816</color>
+</resources>
