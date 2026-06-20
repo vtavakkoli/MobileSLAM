@@ -54,6 +54,11 @@ class ResultsActivity : AppCompatActivity() {
             renderer.showCameras = isChecked
             binding.resultsGlView.requestRender()
         }
+
+        binding.btnToggleAxes.setOnClickListener {
+            renderer.showAxes = !renderer.showAxes
+            binding.resultsGlView.requestRender()
+        }
     }
 
     private fun setupGlView() {
@@ -73,8 +78,10 @@ class ResultsActivity : AppCompatActivity() {
                         if (event.pointerCount == 1) {
                             val dx: Float = x - previousX
                             val dy: Float = y - previousY
-                            renderer.angleY += dx * 0.3f
-                            renderer.angleX += dy * 0.12f
+                            val panCoeff = SlamPreferences.getPanCoefficient(this@ResultsActivity)
+                            val tiltCoeff = SlamPreferences.getTiltCoefficient(this@ResultsActivity)
+                            renderer.angleY += dx * panCoeff
+                            renderer.angleX += dy * tiltCoeff
                         } else if (event.pointerCount == 2) {
                             val newDistance = getDistance(event)
                             val delta = newDistance - lastDistance

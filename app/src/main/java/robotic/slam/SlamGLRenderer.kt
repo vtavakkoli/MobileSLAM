@@ -37,6 +37,7 @@ class SlamGLRenderer : GLSurfaceView.Renderer {
     private var program = 0
     private var frustumVerticesBuffer: FloatBuffer? = null
     private var frustumIndexBuffer: ShortBuffer? = null
+    private var axesBuffer: FloatBuffer? = null
 
     var angleX: Float = 75f
     var angleY: Float = 0f
@@ -51,6 +52,7 @@ class SlamGLRenderer : GLSurfaceView.Renderer {
     @Volatile var showFeatures: Boolean = true
     @Volatile var showPath: Boolean = true
     @Volatile var showCameras: Boolean = true
+    @Volatile var showAxes: Boolean = true
 
     init {
         val frustum = floatArrayOf(
@@ -73,6 +75,35 @@ class SlamGLRenderer : GLSurfaceView.Renderer {
                 put(indices)
                 position(0)
             }
+
+        val axes = floatArrayOf(
+            // X-axis (Red)
+            0f, 0f, 0f,  1.0f, 0f, 0f,
+            1.0f, 0f, 0f,  0.85f, 0.08f, 0f,
+            1.0f, 0f, 0f,  0.85f, -0.08f, 0f,
+            // X Label
+            1.2f, 0.1f, 0f, 1.4f, -0.1f, 0f,
+            1.2f, -0.1f, 0f, 1.4f, 0.1f, 0f,
+
+            // Y-axis (Green) - UP
+            0f, 0f, 0f,  0f, 1.0f, 0f,
+            0f, 1.0f, 0f,  0.08f, 0.85f, 0f,
+            0f, 1.0f, 0f, -0.08f, 0.85f, 0f,
+            // Y Label
+            -0.1f, 1.4f, 0f, 0f, 1.3f, 0f,
+             0.1f, 1.4f, 0f, 0f, 1.3f, 0f,
+             0f, 1.3f, 0f, 0f, 1.15f, 0f,
+
+            // Z-axis (Blue) - FORWARD
+            0f, 0f, 0f,  0f, 0f, 1.0f,
+            0f, 0f, 1.0f,  0.08f, 0f, 0.85f,
+            0f, 0f, 1.0f, -0.08f, 0f, 0.85f,
+            // Z Label
+            -0.1f, 0.1f, 1.3f, 0.1f, 0.1f, 1.3f,
+             0.1f, 0.1f, 1.3f, -0.1f, -0.1f, 1.3f,
+            -0.1f, -0.1f, 1.3f, 0.1f, -0.1f, 1.3f
+        )
+        axesBuffer = createFloatBuffer(axes)
     }
 
     fun clearData() {
@@ -243,6 +274,66 @@ class SlamGLRenderer : GLSurfaceView.Renderer {
                     frustumIndexBuffer?.position(0)
                     GLES20.glDrawElements(GLES20.GL_LINES, 16, GLES20.GL_UNSIGNED_SHORT, frustumIndexBuffer)
                 }
+            }
+
+            // Draw orientation axes as a fixed overlay in the bottom right corner
+            if (showAxes) {
+                GLES20.glDisable(GLES20.GL_DEPTH_TEST)
+                
+                // Get current viewport to restore later
+                val currentViewport = IntArray(4)
+                GLES20.glGetIntegerv(GLES20.GL_VIEWPORT, currentViewport, 0)
+                
+                // Define a small square viewport in the top right
+                val overlaySize = (currentViewport[2] * 0.25f).toInt().coerceIn(180, 450)
+                val xOffset = currentViewport[2] - overlaySize - 20
+                val yOffset = currentViewport[3] - overlaySize - 10
+                GLES20.glViewport(xOffset, yOffset, overlaySize, overlaySize)
+                
+                val axesMVP = FloatArray(16)
+                val axesProj = FloatArray(16)
+                Matrix.perspectiveM(axesProj, 0, 45f, 1f, 0.1f, 20f)
+                
+                val axesView = FloatArray(16)
+                Matrix.setLookAtM(axesView, 0, 0f, 0f, 6f, 0f, 0f, 0f, 0f, 1f, 0f)
+                
+                val rot = FloatArray(16)
+                Matrix.setIdentityM(rot, 0)
+                Matrix.rotateM(rot, 0, angleX, 1f, 0f, 0f)
+                Matrix.rotateM(rot, 0, angleY, 0f, 1f, 0f)
+                
+                val mv = FloatArray(16)
+                Matrix.multiplyMM(mv, 0, axesView, 0, rot, 0)
+                // Center slightly to account for labels
+                Matrix.translateM(mv, 0, -0.2f, -0.2f, 0f)
+                
+                Matrix.multiplyMM(axesMVP, 0, axesProj, 0, mv, 0)
+                GLES20.glUniformMatrix4fv(matrixHandle, 1, false, axesMVP, 0)
+                GLES20.glEnableVertexAttribArray(posHandle)
+                GLES20.glDisableVertexAttribArray(colorHandle)
+                GLES20.glLineWidth(5.0f)
+                
+                // X - Red
+                GLES20.glVertexAttrib4f(colorHandle, 1.0f, 0.2f, 0.2f, 1.0f)
+                axesBuffer?.position(0)
+                GLES20.glVertexAttribPointer(posHandle, 3, GLES20.GL_FLOAT, false, 0, axesBuffer)
+                GLES20.glDrawArrays(GLES20.GL_LINES, 0, 10) 
+                
+                // Y - Green (UP)
+                GLES20.glVertexAttrib4f(colorHandle, 0.2f, 1.0f, 0.2f, 1.0f)
+                axesBuffer?.position(30) 
+                GLES20.glVertexAttribPointer(posHandle, 3, GLES20.GL_FLOAT, false, 0, axesBuffer)
+                GLES20.glDrawArrays(GLES20.GL_LINES, 0, 12) 
+                
+                // Z - Blue (FORWARD)
+                GLES20.glVertexAttrib4f(colorHandle, 0.2f, 0.5f, 1.0f, 1.0f)
+                axesBuffer?.position(66) 
+                GLES20.glVertexAttribPointer(posHandle, 3, GLES20.GL_FLOAT, false, 0, axesBuffer)
+                GLES20.glDrawArrays(GLES20.GL_LINES, 0, 12) 
+
+                // Restore original viewport
+                GLES20.glViewport(currentViewport[0], currentViewport[1], currentViewport[2], currentViewport[3])
+                GLES20.glEnable(GLES20.GL_DEPTH_TEST)
             }
         }
     }

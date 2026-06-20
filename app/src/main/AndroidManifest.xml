@@ -37,12 +37,18 @@
         <activity
             android:name=".SlamActivity"
             android:exported="false"
-            android:label="SLAM Engine" />
+            android:label="SLAM Engine"
+            android:theme="@style/Theme.SLAM.NoActionBar" />
 
         <activity
             android:name=".ResultsActivity"
             android:exported="false"
             android:label="3D Map History" />
+
+        <activity
+            android:name=".CalibrationActivity"
+            android:exported="false"
+            android:label="Camera Calibration" />
 
     </application>
 

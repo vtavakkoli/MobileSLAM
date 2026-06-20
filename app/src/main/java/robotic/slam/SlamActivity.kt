@@ -55,6 +55,10 @@ class SlamActivity : AppCompatActivity(), CameraBridgeViewBase.CvCameraViewListe
         binding.actionButton.setOnClickListener {
             if (isSlamRunning) stopSlam(showToast = true) else startSlamSession()
         }
+
+        binding.btnToggleAxes.setOnClickListener {
+            renderer.showAxes = !renderer.showAxes
+        }
     }
 
     private fun setupCameraView() {
@@ -87,8 +91,10 @@ class SlamActivity : AppCompatActivity(), CameraBridgeViewBase.CvCameraViewListe
                 val x: Float = event.x
                 val y: Float = event.y
                 if (event.action == MotionEvent.ACTION_MOVE) {
-                    renderer.angleY += (x - previousX) * 0.3f
-                    renderer.angleX += (y - previousY) * 0.3f
+                    val panCoeff = SlamPreferences.getPanCoefficient(context)
+                    val tiltCoeff = SlamPreferences.getTiltCoefficient(context)
+                    renderer.angleY += (x - previousX) * panCoeff
+                    renderer.angleX += (y - previousY) * tiltCoeff
                 } else if (event.action == MotionEvent.ACTION_UP) {
                     v.performClick()
                 }

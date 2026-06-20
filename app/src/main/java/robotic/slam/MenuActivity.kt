@@ -27,6 +27,10 @@ class MenuActivity : AppCompatActivity() {
             startActivity(Intent(this, ResultsActivity::class.java))
         }
 
+        binding.btnOpenCalibration.setOnClickListener {
+            startActivity(Intent(this, CalibrationActivity::class.java))
+        }
+
         binding.infoCard.setOnClickListener {
             AlertDialog.Builder(this)
                 .setTitle("SLAM Engine")
