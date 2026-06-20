@@ -27,7 +27,8 @@ class ResultsActivity : AppCompatActivity() {
             showBackground = false
             angleX = 78f
             angleY = -25f
-            zoom = 35f
+            zoom = 24f
+            mapDisplayScale = 2.0f
             cameraFrustumScale = 0.11f
             cameraDrawStride = 18
             showFeatures = true
@@ -73,7 +74,7 @@ class ResultsActivity : AppCompatActivity() {
                             val dx: Float = x - previousX
                             val dy: Float = y - previousY
                             renderer.angleY += dx * 0.3f
-                            renderer.angleX += dy * 0.3f
+                            renderer.angleX += dy * 0.12f
                         } else if (event.pointerCount == 2) {
                             val newDistance = getDistance(event)
                             val delta = newDistance - lastDistance

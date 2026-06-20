@@ -53,6 +53,27 @@ static constexpr int MAX_DISPLAY_MATCHES = 250;
 static constexpr int MIN_GOOD_MATCHES = 25;
 static constexpr int MIN_POSE_INLIERS = 18;
 
+static constexpr double MAX_REPROJECTION_ERROR_PX = 4.0;
+static constexpr double MIN_TRIANGULATED_DEPTH = 0.05;
+static constexpr double MAX_TRIANGULATED_DEPTH = 14.0;
+
+bool isInFrontOfCamera(const cv::Mat& transform, const cv::Mat& point4d) {
+    cv::Mat cameraPoint = transform * point4d;
+    return cameraPoint.at<double>(2, 0) > MIN_TRIANGULATED_DEPTH;
+}
+
+double reprojectionErrorPx(const cv::Mat& projection, const cv::Mat& point4d, const cv::Point2f& observed) {
+    cv::Mat projected = projection * point4d;
+    const double w = projected.at<double>(2, 0);
+    if (std::fabs(w) < 1e-9) return 1e9;
+
+    const double px = projected.at<double>(0, 0) / w;
+    const double py = projected.at<double>(1, 0) / w;
+    const double dx = px - static_cast<double>(observed.x);
+    const double dy = py - static_cast<double>(observed.y);
+    return std::sqrt(dx * dx + dy * dy);
+}
+
 void setPreviousFrame(const cv::Mat& frameGray,
                       const cv::Mat& frameRgba,
                       const std::vector<cv::KeyPoint>& keypoints,
@@ -302,9 +323,18 @@ Java_robotic_slam_SlamActivity_processFrameNative(
                             double x = pts4D.at<float>(0, i) / w;
                             double y = pts4D.at<float>(1, i) / w;
                             double z = pts4D.at<float>(2, i) / w;
-                            if (z <= 0.05 || z > 20.0) continue;
+                            if (z <= MIN_TRIANGULATED_DEPTH || z > MAX_TRIANGULATED_DEPTH) continue;
 
                             cv::Mat ptPrev = (cv::Mat_<double>(4, 1) << x, y, z, 1.0);
+
+                            // Keep only points that project consistently into both keyframes.
+                            // This removes most floating/outlier points, so the cloud follows
+                            // the observed room surfaces instead of only matching the path shape.
+                            if (!isInFrontOfCamera(T_curr_prev, ptPrev)) continue;
+                            const double errPrev = reprojectionErrorPx(P_prev, ptPrev, ptsPrev[i]);
+                            const double errCurr = reprojectionErrorPx(P_curr, ptPrev, ptsCurr[i]);
+                            if (errPrev > MAX_REPROJECTION_ERROR_PX || errCurr > MAX_REPROJECTION_ERROR_PX) continue;
+
                             cv::Mat ptWorld = T_world_prev * ptPrev;
 
                             int ix = static_cast<int>(ptsCurr[i].x);

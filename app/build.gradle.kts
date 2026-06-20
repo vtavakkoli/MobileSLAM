@@ -10,6 +10,10 @@ android {
         }
     }
 
+    // Android 15+/16 KB page-size readiness:
+    // NDK r28+ builds native libraries with 16 KB ELF LOAD alignment by default.
+    ndkVersion = "28.2.13676358"
+
     defaultConfig {
         applicationId = "robotic.slam"
         minSdk = 27
@@ -35,6 +39,14 @@ android {
             )
         }
     }
+    packaging {
+        jniLibs {
+            // Keep native libraries uncompressed; AGP 8.5.1+ / 9.x then packages them
+            // with 16 KB zip alignment for Android 15+ 16 KB page-size devices.
+            useLegacyPackaging = false
+        }
+    }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_11
         targetCompatibility = JavaVersion.VERSION_11
@@ -57,13 +69,7 @@ dependencies {
     implementation(libs.androidx.core.ktx)
     implementation(libs.material)
 
-    // CameraX
-    implementation(libs.androidx.camera.core)
-    implementation(libs.androidx.camera.camera2)
-    implementation(libs.androidx.camera.lifecycle)
-    implementation(libs.androidx.camera.video)
-    implementation(libs.androidx.camera.view)
-    implementation(libs.androidx.camera.extensions)
+    // OpenCV provides the camera preview and native computer-vision runtime.
     implementation(libs.opencv)
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.espresso.core)

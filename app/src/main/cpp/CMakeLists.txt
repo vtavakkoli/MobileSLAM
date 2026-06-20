@@ -20,6 +20,12 @@ add_library(${CMAKE_PROJECT_NAME} SHARED
         # List C/C++ source files with relative paths to this CMakeLists.txt.
         native-lib.cpp)
 
+# Force 16 KB ELF LOAD segment alignment for Android 15+ page-size compatibility.
+# This is the documented fallback for NDK r27 and older, and harmless with NDK r28+.
+target_link_options(${CMAKE_PROJECT_NAME} PRIVATE
+        "-Wl,-z,max-page-size=16384"
+        "-Wl,-z,common-page-size=16384")
+
 # Specifies libraries CMake should link to your target library.
 target_link_libraries(${CMAKE_PROJECT_NAME}
         # List libraries link to the target library

@@ -13,6 +13,14 @@ import kotlin.math.max
 
 class SlamGLRenderer : GLSurfaceView.Renderer {
 
+    companion object {
+        // OpenCV camera coordinates use +Z as forward, while the OpenGL view reads
+        // forward more naturally along -Z. Mirror the display Z axis so a physical
+        // forward move no longer appears as backward movement in the map.
+        private const val DEFAULT_MAP_DISPLAY_SCALE = 2.0f
+        private const val DEFAULT_MIRROR_FORWARD_AXIS = true
+    }
+
     private val vPMatrix = FloatArray(16)
     private val projectionMatrix = FloatArray(16)
     private val viewMatrix = FloatArray(16)
@@ -34,6 +42,8 @@ class SlamGLRenderer : GLSurfaceView.Renderer {
     var angleY: Float = 0f
     var zoom: Float = 25f
     var cameraFrustumScale: Float = 0.18f
+    var mapDisplayScale: Float = DEFAULT_MAP_DISPLAY_SCALE
+    var mirrorForwardAxis: Boolean = DEFAULT_MIRROR_FORWARD_AXIS
     var cameraDrawStride: Int = 12
     var showBackground = false
 
@@ -45,10 +55,10 @@ class SlamGLRenderer : GLSurfaceView.Renderer {
     init {
         val frustum = floatArrayOf(
             0f, 0f, 0f,
-            -0.5f, 0.35f, -1f,
-             0.5f, 0.35f, -1f,
-             0.5f,-0.35f, -1f,
-            -0.5f,-0.35f, -1f
+            -0.5f, 0.35f, 1f,
+             0.5f, 0.35f, 1f,
+             0.5f,-0.35f, 1f,
+            -0.5f,-0.35f, 1f
         )
         frustumVerticesBuffer = createFloatBuffer(frustum)
 
@@ -159,11 +169,19 @@ class SlamGLRenderer : GLSurfaceView.Renderer {
         val rotation = FloatArray(16)
         Matrix.setIdentityM(rotation, 0)
         Matrix.rotateM(rotation, 0, angleX, 1f, 0f, 0f)
-        Matrix.rotateM(rotation, 0, angleY, 0f, 0f, 1f)
+        Matrix.rotateM(rotation, 0, angleY, 0f, 1f, 0f)
 
         val viewRotationMatrix = FloatArray(16)
         Matrix.multiplyMM(viewRotationMatrix, 0, viewMatrix, 0, rotation, 0)
         Matrix.multiplyMM(vPMatrix, 0, projectionMatrix, 0, viewRotationMatrix, 0)
+
+        val mapScaleMatrix = FloatArray(16)
+        Matrix.setIdentityM(mapScaleMatrix, 0)
+        val zScale = if (mirrorForwardAxis) -mapDisplayScale else mapDisplayScale
+        Matrix.scaleM(mapScaleMatrix, 0, mapDisplayScale, mapDisplayScale, zScale)
+
+        val mapVPMatrix = FloatArray(16)
+        Matrix.multiplyMM(mapVPMatrix, 0, vPMatrix, 0, mapScaleMatrix, 0)
 
         GLES20.glUseProgram(program)
         val matrixHandle = GLES20.glGetUniformLocation(program, "uVPMatrix")
@@ -173,7 +191,7 @@ class SlamGLRenderer : GLSurfaceView.Renderer {
         synchronized(this) {
             if (showFeatures) {
                 pointBuffer?.let {
-                    GLES20.glUniformMatrix4fv(matrixHandle, 1, false, vPMatrix, 0)
+                    GLES20.glUniformMatrix4fv(matrixHandle, 1, false, mapVPMatrix, 0)
                     GLES20.glEnableVertexAttribArray(posHandle)
                     it.position(0)
                     GLES20.glVertexAttribPointer(posHandle, 3, GLES20.GL_FLOAT, false, 24, it)
@@ -186,7 +204,7 @@ class SlamGLRenderer : GLSurfaceView.Renderer {
 
             if (showPath) {
                 pathVertexBuffer?.let {
-                    GLES20.glUniformMatrix4fv(matrixHandle, 1, false, vPMatrix, 0)
+                    GLES20.glUniformMatrix4fv(matrixHandle, 1, false, mapVPMatrix, 0)
                     GLES20.glEnableVertexAttribArray(posHandle)
                     it.position(0)
                     GLES20.glVertexAttribPointer(posHandle, 3, GLES20.GL_FLOAT, false, 0, it)
@@ -216,7 +234,7 @@ class SlamGLRenderer : GLSurfaceView.Renderer {
                     Matrix.scaleM(modelMatrix, 0, cameraFrustumScale, cameraFrustumScale, cameraFrustumScale)
 
                     val mvp = FloatArray(16)
-                    Matrix.multiplyMM(mvp, 0, vPMatrix, 0, modelMatrix, 0)
+                    Matrix.multiplyMM(mvp, 0, mapVPMatrix, 0, modelMatrix, 0)
                     GLES20.glUniformMatrix4fv(matrixHandle, 1, false, mvp, 0)
 
                     frustumVerticesBuffer?.position(0)
