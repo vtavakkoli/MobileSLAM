@@ -80,7 +80,15 @@ class SlamActivity : AppCompatActivity(), CameraBridgeViewBase.CvCameraViewListe
     }
 
     private fun setupGLView() {
-        renderer = SlamGLRenderer()
+        renderer = SlamGLRenderer().apply {
+            // The map itself is scaled 2x and the camera is closer, so the live
+            // map fills the screen instead of looking tiny behind the preview.
+            zoom = 13f
+            mapDisplayScale = 2.0f
+            mirrorForwardAxis = true
+            cameraFrustumScale = 0.12f
+            cameraDrawStride = 10
+        }
         binding.glSurfaceView.apply {
             setEGLContextClientVersion(2)
             setZOrderOnTop(false)

@@ -41,7 +41,7 @@ class SlamGLRenderer : GLSurfaceView.Renderer {
 
     var angleX: Float = 75f
     var angleY: Float = 0f
-    var zoom: Float = 25f
+    var zoom: Float = 13f
     var cameraFrustumScale: Float = 0.18f
     var mapDisplayScale: Float = DEFAULT_MAP_DISPLAY_SCALE
     var mirrorForwardAxis: Boolean = DEFAULT_MIRROR_FORWARD_AXIS
@@ -301,6 +301,9 @@ class SlamGLRenderer : GLSurfaceView.Renderer {
                 Matrix.setIdentityM(rot, 0)
                 Matrix.rotateM(rot, 0, angleX, 1f, 0f, 0f)
                 Matrix.rotateM(rot, 0, angleY, 0f, 1f, 0f)
+                if (mirrorForwardAxis) {
+                    Matrix.scaleM(rot, 0, 1f, 1f, -1f)
+                }
                 
                 val mv = FloatArray(16)
                 Matrix.multiplyMM(mv, 0, axesView, 0, rot, 0)

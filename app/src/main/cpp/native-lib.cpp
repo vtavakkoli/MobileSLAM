@@ -5,6 +5,8 @@
 #include <mutex>
 #include <cmath>
 #include <algorithm>
+#include <unordered_set>
+#include <cstdint>
 
 // OpenCV headers
 #include <opencv2/core.hpp>
@@ -39,11 +41,19 @@ static cv::Mat g_prevDescriptors;
 static std::vector<cv::KeyPoint> g_prevKeypoints;
 static cv::Mat g_livePreviewRgba;
 static size_t g_nextPointToReturn = 0;
+static bool g_hasLastWorldStep = false;
+static cv::Vec3d g_lastWorldStep(0.0, 0.0, 0.0);
+static std::unordered_set<int64_t> g_seenPointVoxels;
 
 // Monocular SLAM has no metric scale. This value only keeps visualization stable.
 // Replace this with ARCore/depth/IMU/known-scale logic for real metric reconstruction.
 static constexpr double MONOCULAR_STEP_SCALE = 0.05;
 static constexpr double MIN_PARALLAX_PX = 3.0;
+static constexpr double MIN_TRIANGULATION_ANGLE_DEG = 0.7;
+static constexpr double MAX_TRIANGULATION_ANGLE_DEG = 45.0;
+static constexpr double MAX_POINT_RANGE = 5.5;
+static constexpr double MAX_FRAME_STEP = 0.18;
+static constexpr double POINT_VOXEL_SIZE = 0.035;
 
 // More features + a less aggressive ratio test gives more visible correspondences.
 // RANSAC/recoverPose still filters the matches used for pose and triangulation.
@@ -55,7 +65,7 @@ static constexpr int MIN_POSE_INLIERS = 18;
 
 static constexpr double MAX_REPROJECTION_ERROR_PX = 4.0;
 static constexpr double MIN_TRIANGULATED_DEPTH = 0.05;
-static constexpr double MAX_TRIANGULATED_DEPTH = 14.0;
+static constexpr double MAX_TRIANGULATED_DEPTH = 6.0;
 
 bool isInFrontOfCamera(const cv::Mat& transform, const cv::Mat& point4d) {
     cv::Mat cameraPoint = transform * point4d;
@@ -72,6 +82,107 @@ double reprojectionErrorPx(const cv::Mat& projection, const cv::Mat& point4d, co
     const double dx = px - static_cast<double>(observed.x);
     const double dy = py - static_cast<double>(observed.y);
     return std::sqrt(dx * dx + dy * dy);
+}
+
+cv::Mat displayYAxisTransform() {
+    return (cv::Mat_<double>(4, 4) <<
+        1,  0, 0, 0,
+        0, -1, 0, 0,
+        0,  0, 1, 0,
+        0,  0, 0, 1);
+}
+
+cv::Vec3d translationOf(const cv::Mat& pose) {
+    return cv::Vec3d(pose.at<double>(0, 3), pose.at<double>(1, 3), pose.at<double>(2, 3));
+}
+
+double vecNorm(const cv::Vec3d& v) {
+    return std::sqrt(v.dot(v));
+}
+
+cv::Mat poseWithStepClamped(const cv::Mat& oldPose, const cv::Mat& candidatePose) {
+    cv::Vec3d oldT = translationOf(oldPose);
+    cv::Vec3d newT = translationOf(candidatePose);
+    cv::Vec3d step = newT - oldT;
+    const double n = vecNorm(step);
+    if (n <= MAX_FRAME_STEP || n < 1e-9) return candidatePose;
+
+    cv::Mat clamped = candidatePose.clone();
+    cv::Vec3d limited = oldT + step * (MAX_FRAME_STEP / n);
+    clamped.at<double>(0, 3) = limited[0];
+    clamped.at<double>(1, 3) = limited[1];
+    clamped.at<double>(2, 3) = limited[2];
+    return clamped;
+}
+
+bool acceptMotionCandidate(const cv::Mat& oldPose,
+                           cv::Mat& candidatePose,
+                           cv::Vec3d& acceptedStep) {
+    candidatePose = poseWithStepClamped(oldPose, candidatePose);
+    acceptedStep = translationOf(candidatePose) - translationOf(oldPose);
+    const double stepNorm = vecNorm(acceptedStep);
+    if (stepNorm < 1e-5) return true;
+
+    if (g_hasLastWorldStep) {
+        const double lastNorm = vecNorm(g_lastWorldStep);
+        if (lastNorm > 1e-5) {
+            const double cosAngle = acceptedStep.dot(g_lastWorldStep) / (stepNorm * lastNorm);
+            // Monocular ORB can occasionally flip the baseline direction on planar
+            // indoor scenes. Reject those single-frame reversals instead of drawing
+            // an obvious backward jump through the room.
+            if (cosAngle < -0.65 && stepNorm > 0.4 * lastNorm) {
+                return false;
+            }
+        }
+    }
+
+    return true;
+}
+
+double triangulationAngleDeg(const cv::Mat& pointWorld,
+                             const cv::Mat& prevPose,
+                             const cv::Mat& currPose) {
+    cv::Vec3d point(pointWorld.at<double>(0, 0), pointWorld.at<double>(1, 0), pointWorld.at<double>(2, 0));
+    cv::Vec3d cPrev = translationOf(prevPose);
+    cv::Vec3d cCurr = translationOf(currPose);
+    cv::Vec3d a = point - cPrev;
+    cv::Vec3d b = point - cCurr;
+    const double na = vecNorm(a);
+    const double nb = vecNorm(b);
+    if (na < 1e-9 || nb < 1e-9) return 0.0;
+    double c = a.dot(b) / (na * nb);
+    c = std::max(-1.0, std::min(1.0, c));
+    return std::acos(c) * 180.0 / M_PI;
+}
+
+bool hasReasonableRange(const cv::Mat& pointWorld,
+                        const cv::Mat& prevPose,
+                        const cv::Mat& currPose) {
+    cv::Vec3d point(pointWorld.at<double>(0, 0), pointWorld.at<double>(1, 0), pointWorld.at<double>(2, 0));
+    const double rPrev = vecNorm(point - translationOf(prevPose));
+    const double rCurr = vecNorm(point - translationOf(currPose));
+    return rPrev > MIN_TRIANGULATED_DEPTH && rCurr > MIN_TRIANGULATED_DEPTH &&
+           rPrev <= MAX_POINT_RANGE && rCurr <= MAX_POINT_RANGE;
+}
+
+int64_t pointVoxelKey(double x, double y, double z) {
+    const int64_t xi = static_cast<int64_t>(std::llround(x / POINT_VOXEL_SIZE));
+    const int64_t yi = static_cast<int64_t>(std::llround(y / POINT_VOXEL_SIZE));
+    const int64_t zi = static_cast<int64_t>(std::llround(z / POINT_VOXEL_SIZE));
+    // Compact signed voxel coordinates into a stable hash key.
+    return ((xi & 0x1fffffLL) << 42) ^ ((yi & 0x1fffffLL) << 21) ^ (zi & 0x1fffffLL);
+}
+
+cv::Mat worldPointToDisplay(const cv::Mat& ptWorld) {
+    cv::Mat out = ptWorld.clone();
+    // OpenCV image/camera Y points down. Use a Y-up display convention for OpenGL.
+    out.at<double>(1, 0) = -out.at<double>(1, 0);
+    return out;
+}
+
+cv::Mat worldPoseToDisplay(const cv::Mat& poseWorld) {
+    const cv::Mat S = displayYAxisTransform();
+    return S * poseWorld * S;
 }
 
 void setPreviousFrame(const cv::Mat& frameGray,
@@ -189,6 +300,9 @@ Java_robotic_slam_SlamActivity_resetSlamNative(JNIEnv*, jobject) {
     g_livePreviewRgba.release();
     g_K.release();
     g_nextPointToReturn = 0;
+    g_hasLastWorldStep = false;
+    g_lastWorldStep = cv::Vec3d(0.0, 0.0, 0.0);
+    g_seenPointVoxels.clear();
 }
 
 extern "C" JNIEXPORT jstring JNICALL
@@ -294,9 +408,12 @@ Java_robotic_slam_SlamActivity_processFrameNative(
 
                         cv::Mat T_world_prev = g_T_world_curr.clone();
                         cv::Mat T_prev_curr = T_curr_prev.inv();
-                        g_T_world_curr = g_T_world_curr * T_prev_curr;
+                        cv::Mat T_world_candidate = g_T_world_curr * T_prev_curr;
+                        cv::Vec3d acceptedWorldStep;
+                        if (acceptMotionCandidate(T_world_prev, T_world_candidate, acceptedWorldStep)) {
+                            g_T_world_curr = T_world_candidate;
 
-                        // Triangulate in the previous camera coordinate system.
+                            // Triangulate in the previous camera coordinate system.
                         cv::Mat P_prev = (cv::Mat_<double>(3, 4) <<
                             1, 0, 0, 0,
                             0, 1, 0, 0,
@@ -336,15 +453,23 @@ Java_robotic_slam_SlamActivity_processFrameNative(
                             if (errPrev > MAX_REPROJECTION_ERROR_PX || errCurr > MAX_REPROJECTION_ERROR_PX) continue;
 
                             cv::Mat ptWorld = T_world_prev * ptPrev;
+                            const double angleDeg = triangulationAngleDeg(ptWorld, T_world_prev, g_T_world_curr);
+                            if (angleDeg < MIN_TRIANGULATION_ANGLE_DEG || angleDeg > MAX_TRIANGULATION_ANGLE_DEG) continue;
+                            if (!hasReasonableRange(ptWorld, T_world_prev, g_T_world_curr)) continue;
+
+                            cv::Mat ptDisplay = worldPointToDisplay(ptWorld);
+                            const int64_t voxelKey = pointVoxelKey(ptDisplay.at<double>(0), ptDisplay.at<double>(1), ptDisplay.at<double>(2));
+                            if (g_seenPointVoxels.find(voxelKey) != g_seenPointVoxels.end()) continue;
+                            g_seenPointVoxels.insert(voxelKey);
 
                             int ix = static_cast<int>(ptsCurr[i].x);
                             int iy = static_cast<int>(ptsCurr[i].y);
                             if (ix >= 0 && ix < originalRgba.cols && iy >= 0 && iy < originalRgba.rows) {
                                 cv::Vec4b color = originalRgba.at<cv::Vec4b>(iy, ix);
                                 g_pointCloud.push_back({
-                                    static_cast<float>(ptWorld.at<double>(0)),
-                                    static_cast<float>(ptWorld.at<double>(1)),
-                                    static_cast<float>(ptWorld.at<double>(2)),
+                                    static_cast<float>(ptDisplay.at<double>(0)),
+                                    static_cast<float>(ptDisplay.at<double>(1)),
+                                    static_cast<float>(ptDisplay.at<double>(2)),
                                     color[0] / 255.0f,
                                     color[1] / 255.0f,
                                     color[2] / 255.0f
@@ -354,6 +479,11 @@ Java_robotic_slam_SlamActivity_processFrameNative(
                         }
 
                         acceptedAsKeyframe = true;
+                        if (vecNorm(acceptedWorldStep) > 1e-5) {
+                            g_lastWorldStep = acceptedWorldStep;
+                            g_hasLastWorldStep = true;
+                        }
+                        }
                     }
                 }
             }
@@ -367,10 +497,11 @@ Java_robotic_slam_SlamActivity_processFrameNative(
 
     // Update camera path only once per processed frame. Renderer expects 6 floats per pose.
     Pose currPose;
-    currPose.tx = static_cast<float>(g_T_world_curr.at<double>(0, 3));
-    currPose.ty = static_cast<float>(g_T_world_curr.at<double>(1, 3));
-    currPose.tz = static_cast<float>(g_T_world_curr.at<double>(2, 3));
-    getEulerAngles(g_T_world_curr(cv::Rect(0, 0, 3, 3)), currPose.rx, currPose.ry, currPose.rz);
+    cv::Mat displayPose = worldPoseToDisplay(g_T_world_curr);
+    currPose.tx = static_cast<float>(displayPose.at<double>(0, 3));
+    currPose.ty = static_cast<float>(displayPose.at<double>(1, 3));
+    currPose.tz = static_cast<float>(displayPose.at<double>(2, 3));
+    getEulerAngles(displayPose(cv::Rect(0, 0, 3, 3)), currPose.rx, currPose.ry, currPose.rz);
     g_cameraPath.push_back(currPose);
 
     if (g_pointCloud.size() > 200000) {

@@ -27,10 +27,11 @@ class ResultsActivity : AppCompatActivity() {
             showBackground = false
             angleX = 78f
             angleY = -25f
-            zoom = 24f
+            zoom = 12f
             mapDisplayScale = 2.0f
-            cameraFrustumScale = 0.11f
-            cameraDrawStride = 18
+            mirrorForwardAxis = true
+            cameraFrustumScale = 0.10f
+            cameraDrawStride = 14
             showFeatures = true
             showPath = true
             showCameras = true
